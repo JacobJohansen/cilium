@@ -332,13 +332,9 @@ func iptRange(cidr *cidr.CIDR) string {
 	return start.String() + "-" + end.String()
 }
 
-// -A PREROUTING ! -d 10.15.0.1/32 -i cilium_host -m iprange --dst-range 10.15.0.0-10.15.255.255 -m dscp ! --dscp 0x00 -j NOTRACK
 func installProxyNotrackRules() error {
-	// match traffic to proxy
-	toProxyMarkMatch := fmt.Sprintf("%#08x/%#08x", proxy.MagicMarkIsToProxy, proxy.MagicMarkHostMask)
-	// match return traffic from proxy (identity is all zeroes).
-	// Mask ignores the one bit that marks whether the progxy is ingress or egress
-	matchProxyReply := fmt.Sprintf("%#08x/%#08x", proxy.MagicMarkIsProxy, ^uint32(proxy.MagicMarkHostMask&^proxy.MagicMarkProxyMask))
+	// match return traffic from an ingress proxy (identity is all zeroes).
+	matchIngressProxyReply := fmt.Sprintf("%#08x", proxy.MagicMarkIngress)
 	var err error
 	if useIp4tables {
 		// No conntrack for traffic to ingress proxy
@@ -352,18 +348,6 @@ func installProxyNotrackRules() error {
 			"-m", "comment", "--comment", "cilium: NOTRACK for ingress proxy traffic on " + defaults.HostDevice,
 			"-j", "NOTRACK"}, false)
 		if err == nil {
-			// No conntrack for traffic to egress proxy
-			err = runProg("iptables", []string{
-				"-t", "raw",
-				"-A", ciliumPreRawChain,
-				"-i", "lxc+",
-				"!", "-d", node.GetInternalIPv4().String(),
-				"-m", "iprange", "--dst-range", iptRange(node.GetIPv4AllocRange()),
-				"-m", "mark", "--mark", toProxyMarkMatch,
-				"-m", "comment", "--comment", "cilium: NOTRACK for egress proxy traffic on lxc+",
-				"-j", "NOTRACK"}, false)
-		}
-		if err == nil {
 			// No conntrack for proxy return traffic
 			err = runProg("iptables", []string{
 				"-t", "raw",
@@ -371,7 +355,7 @@ func installProxyNotrackRules() error {
 				// Return traffic is from a local node POD address
 				"!", "-s", node.GetInternalIPv4().String(),
 				"-m", "iprange", "--src-range", iptRange(node.GetIPv4AllocRange()),
-				"-m", "mark", "--mark", matchProxyReply,
+				"-m", "mark", "--mark", matchIngressProxyReply,
 				"-m", "comment", "--comment", "cilium: NOTRACK for proxy return traffic",
 				"-j", "NOTRACK"}, false)
 		}
@@ -388,16 +372,6 @@ func installProxyNotrackRules() error {
 			"-m", "comment", "--comment", "cilium: NOTRACK for ingress proxy traffic on " + defaults.HostDevice,
 			"-j", "NOTRACK"}, false)
 		if err == nil {
-			// No conntrack for traffic to egress proxy
-			err = runProg("ip6tables", []string{
-				"-t", "raw",
-				"-A", ciliumPreRawChain,
-				"-i", "lxc+",
-				"-m", "mark", "--mark", toProxyMarkMatch,
-				"-m", "comment", "--comment", "cilium: NOTRACK for egress proxy traffic on lxc+",
-				"-j", "NOTRACK"}, false)
-		}
-		if err == nil {
 			// No conntrack for proxy return traffic
 			err = runProg("ip6tables", []string{
 				"-t", "raw",
@@ -405,7 +379,7 @@ func installProxyNotrackRules() error {
 				// Return traffic is from a local node POD address
 				"!", "-s", node.GetIPv6().String(),
 				"-m", "iprange", "--src-range", iptRange(node.GetIPv6AllocRange()),
-				"-m", "mark", "--mark", matchProxyReply,
+				"-m", "mark", "--mark", matchIngressProxyReply,
 				"-m", "comment", "--comment", "cilium: NOTRACK for proxy return traffic",
 				"-j", "NOTRACK"}, false)
 		}
